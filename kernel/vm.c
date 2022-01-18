@@ -434,6 +434,7 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 }
 
 
+
 static void
 recurvmprint(pagetable_t pagetable,uint8 level){
   // there are 2^9 = 512 PTEs in a page table.
@@ -455,4 +456,34 @@ void
 vmprint(pagetable_t pagetable){
   printf("page table %p\n",pagetable);
   recurvmprint(pagetable,0);
+}
+
+void
+countpageaccess(pagetable_t pgtbl,uint64 startva,uint64 npage,uint8* buf){
+  startva = PGROUNDDOWN(startva);
+  for(uint64 i = 0;i<npage;i++){
+    uint64 va = startva + i*PGSIZE;
+    pte_t *pte;
+    pagetable_t pagetable = pgtbl;
+
+    if(va>MAXVA)
+      break;
+
+    for(int level = 2; level > 0; level--) {
+      printf("level:%d\n",level);
+      pte = &pagetable[PX(level, va)];
+      if(*pte & PTE_V) {
+        pagetable = (pagetable_t)PTE2PA(*pte);
+      } 
+      else
+        break;  
+    }
+    pte = &pagetable[PX(0, va)];
+    if(*pte & PTE_A){
+      buf[i/8] |= (1<<(i%8));
+      *pte &= (~(PTE_A));
+    }
+
+
+  }
 }

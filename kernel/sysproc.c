@@ -84,9 +84,13 @@ sys_pgaccess(void)
 {
   // lab pgtbl: your code here.
   static uint8 buf[MAXNPAGE/8];
+  struct proc *p = myproc();
+
   uint64 va;
   int npage;
   uint64 maskva;
+
+  memset(buf,0,MAXNPAGE/8);
 
 
   if(argaddr(0, &va) < 0)
@@ -95,6 +99,13 @@ sys_pgaccess(void)
     return -1;
   if(argaddr(2, &maskva) < 0)
     return -1;
+
+  npage = npage<MAXNPAGE?npage:MAXNPAGE;
+
+  countpageaccess(p->pagetable,va,npage,buf);
+  for(int i=0;i<npage/8;i++)
+    printf("%p\n",buf[i]);
+  copyout(p->pagetable,maskva,(char*)buf,npage/8);
 
   return 0;
 }
