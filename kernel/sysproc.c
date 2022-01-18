@@ -7,6 +7,8 @@
 #include "spinlock.h"
 #include "proc.h"
 
+#define MAXNPAGE (1024)
+
 uint64
 sys_exit(void)
 {
@@ -81,6 +83,19 @@ int
 sys_pgaccess(void)
 {
   // lab pgtbl: your code here.
+  static uint8 buf[MAXNPAGE/8];
+  uint64 va;
+  int npage;
+  uint64 maskva;
+
+
+  if(argaddr(0, &va) < 0)
+    return -1;
+  if(argint(1,&npage)<0)
+    return -1;
+  if(argaddr(2, &maskva) < 0)
+    return -1;
+
   return 0;
 }
 #endif
