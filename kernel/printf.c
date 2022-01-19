@@ -132,3 +132,26 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+// The stack grows from top to bottom
+int
+backtrace(){
+  int idx = 0;
+  uint64 fp = r_fp();
+  uint64 ra = *( (uint64*)(fp - 8) );
+  uint64 top = PGROUNDUP(fp);
+  
+  printf("backtrace:\n");
+  // printf("top:%p\n",top);
+  while (fp!=top){
+    // printf("fp:%p\n",fp);
+    printf("%p\n",ra);
+
+    fp = *( (uint64*)(fp - 16) );
+    ra = *( (uint64*)(fp - 8) );
+    idx+=1;
+  }
+
+  return idx;
+  
+}
