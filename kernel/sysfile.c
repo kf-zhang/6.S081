@@ -192,6 +192,7 @@ sys_unlink(void)
   if(argstr(0, path, MAXPATH) < 0)
     return -1;
 
+  // printf("sys_unlink:%s\n",path);
   begin_op();
   if((dp = nameiparent(path, name)) == 0){
     end_op();
@@ -252,9 +253,10 @@ create(char *path, short type, short major, short minor)
   if((ip = dirlookup(dp, name, 0)) != 0){
     iunlockput(dp);
     ilock(ip);
-    if(type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
+    if( type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
       return ip;
     iunlockput(ip);
+    printf("exit file\n");
     return 0;
   }
 
@@ -294,7 +296,7 @@ sys_open(void)
 
   if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
     return -1;
-
+  // printf("open path:%s\n",path);
   begin_op();
 
   if(omode & O_CREATE){
@@ -322,6 +324,32 @@ sys_open(void)
     return -1;
   }
 
+  if( ip->type == T_SYMLINK && !(omode&O_NOFOLLOW) ){
+    char target[MAXPATH];
+    int depth = 0;
+
+    while(depth<10 && ip->type == T_SYMLINK){
+      readi(ip,0,(uint64)target,0,MAXPATH);
+      printf("path:%s\n",target);
+      iunlock(ip);
+      if( (ip = namei(target)) == 0){
+        end_op();
+        return -1;
+      }
+      ilock(ip);
+      depth++;
+    }
+
+    // printf("type:%d\n",ip->type);
+    if(depth >=10){
+      iunlock(ip);
+      end_op();
+      return -1;
+    }
+    
+  }
+
+
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
       fileclose(f);
@@ -329,7 +357,7 @@ sys_open(void)
     end_op();
     return -1;
   }
-
+  // printf( "sys_open:ip %p\n",(uint64)ip );
   if(ip->type == T_DEVICE){
     f->type = FD_DEVICE;
     f->major = ip->major;
@@ -483,4 +511,34 @@ sys_pipe(void)
     return -1;
   }
   return 0;
+}
+
+uint64
+sys_symlink(void){
+  char target[MAXPATH];
+  char path[MAXPATH];
+  struct inode* ip;
+  if( argstr(0,target,MAXPATH)<0 || argstr(1,path,MAXPATH)<0 )
+    return -1;
+  
+  begin_op();
+  ip = create(path, T_SYMLINK, 0, 0); //create hold the lock of ip
+  printf("sys_symlink:%s ip:%p\n",path,(uint64)ip);
+  if( ip == 0 ){
+    end_op();
+    return -1;
+  }
+  
+  if( writei(ip,0,(uint64)target,0,MAXPATH)!=MAXPATH ){
+    iunlock(ip);
+    end_op();
+    return -1;
+  }  
+  iunlockput(ip);
+  end_op();
+  return 0;
+
+
+  
+  
 }

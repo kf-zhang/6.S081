@@ -243,7 +243,7 @@ static struct inode*
 iget(uint dev, uint inum)
 {
   struct inode *ip, *empty;
-
+  // printf("iget:inum:%d\n",inum);
   acquire(&itable.lock);
 
   // Is the inode already in the table?
@@ -379,7 +379,7 @@ bmap(struct inode *ip, uint bn)
 {
   uint addr, *a;
   struct buf *bp;
-
+  // printf("bn %d\n",bn);
   if(bn < NDIRECT){
     if((addr = ip->addrs[bn]) == 0)
       ip->addrs[bn] = addr = balloc(ip->dev);
@@ -398,6 +398,32 @@ bmap(struct inode *ip, uint bn)
       log_write(bp);
     }
     brelse(bp);
+    return addr;
+  }
+  bn -= (NSINGLEDIRECT *NINDIRECT);
+
+
+  // printf("left bn%d\n",bn);
+  if(bn<NDOUBLEDIRECT*NINDIRECT*NINDIRECT){
+    if( (addr = ip->addrs[NDIRECT+NSINGLEDIRECT]) == 0)
+      ip->addrs[NDIRECT+NSINGLEDIRECT] = addr = balloc(ip->dev);
+    
+    bp = bread(ip->dev,addr);
+    a = (uint*)bp->data;
+    if((addr = a[bn/NINDIRECT]) == 0){
+      a[bn/NINDIRECT] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+    brelse(bp);
+
+    bp = bread(ip->dev,addr);
+    a = (uint*)bp->data;
+    if((addr = a[bn%NINDIRECT]) == 0){
+      a[bn%NINDIRECT] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+    brelse(bp);
+
     return addr;
   }
 
@@ -430,6 +456,30 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  if(ip->addrs[NDIRECT+NSINGLEDIRECT]){
+    bp = bread(ip->dev,ip->addrs[NDIRECT+NSINGLEDIRECT]);
+    a = (uint*) bp->data;
+
+    for(int i=0;i<NINDIRECT;i++){
+      if( a[i] ){
+
+        struct buf* entry = bread(ip->dev,a[i]);
+        uint* arr = (uint*) entry->data;
+        for(int j=0;j<NINDIRECT;j++){
+          if(arr[j])
+            bfree(ip->dev,arr[j]);
+        }
+        brelse(entry);
+        bfree(ip->dev,a[i]);
+        a[i] = 0;
+      }
+    }
+    
+    brelse(bp);
+    bfree(ip->dev,ip->addrs[NDIRECT+NSINGLEDIRECT]);
+    ip->addrs[NDIRECT+NSINGLEDIRECT] = 0;
   }
 
   ip->size = 0;
@@ -531,7 +581,7 @@ dirlookup(struct inode *dp, char *name, uint *poff)
 {
   uint off, inum;
   struct dirent de;
-
+  // printf("dirlookup:name:%s\n",name);
   if(dp->type != T_DIR)
     panic("dirlookup not DIR");
 
@@ -670,5 +720,6 @@ namei(char *path)
 struct inode*
 nameiparent(char *path, char *name)
 {
+  // printf("nameparent: path:%s\n",path);
   return namex(path, 1, name);
 }
