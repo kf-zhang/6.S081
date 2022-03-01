@@ -474,6 +474,7 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  
   if(copyout(p->pagetable, fdarray, (char*)&fd0, sizeof(fd0)) < 0 ||
      copyout(p->pagetable, fdarray+sizeof(fd0), (char *)&fd1, sizeof(fd1)) < 0){
     p->ofile[fd0] = 0;
@@ -483,4 +484,159 @@ sys_pipe(void)
     return -1;
   }
   return 0;
+}
+
+
+uint64 mmap(uint64 addr,int length,int prot,int flags,int fd,int offset)
+{
+  struct proc* p = myproc();
+
+  struct file* fp = p->ofile[fd];
+  if( (flags&MAP_SHARED)&&(!(fp->writable))&&(prot&PROT_WRITE) )
+    return -1;
+
+  for(int i=0;i<NVMA;i++)
+  {
+    if(p->vmas[i].isFree)
+    {
+      p->vmas[i].isFree = 0;
+      p->vmas[i].isAllocated = 0;
+      p->vmas[i].flags = flags;
+      p->vmas[i].fp = p->ofile[fd];
+      p->vmas[i].length = length;
+      p->vmas[i].prot = prot;
+      p->vmas[i].start = p->nextVMAaddr;
+      p->nextVMAaddr+=PGROUNDUP(length);
+      
+      filedup(p->vmas[i].fp);
+      printf("mmap va:%p\n",p->vmas[i].start);
+      return p->vmas[i].start;
+    }
+  }
+
+  return -1;
+}
+
+uint64
+sys_mmap(void)
+{
+  uint64 addr;
+  int length,prot,flags,fd,offset;
+  argaddr(0,&addr);
+  argint(1,&length);
+  argint(2,&prot);
+  argint(3,&flags);
+  argint(4,&fd);
+  argint(5,&offset);
+  return mmap(addr,length,prot,flags,fd,offset);
+}
+
+void write2file(struct VMA* pVMA,uint64 addr,int len)
+{
+  printf("write\n");
+  begin_op();
+  ilock(pVMA->fp->ip);
+  writei(pVMA->fp->ip,1,addr,addr-pVMA->start,len);
+  iunlock(pVMA->fp->ip);
+  end_op();
+}
+void munmap(uint64 addr,int len)
+{
+  int idx = whichVMA(addr);
+  printf("munmap addr:%p\n",addr);
+  if(idx<0)
+    return;
+  len = PGROUNDUP(len);
+  addr = PGROUNDDOWN(addr);
+
+  struct proc* p = myproc();
+  struct VMA* pVMA =  &(p->vmas[idx]);
+  
+  // while(len>0)
+  // {
+    if( (pVMA->prot&PROT_WRITE) &&(pVMA->flags&MAP_SHARED) )
+    {
+      write2file(pVMA,addr,len);
+    }
+    if(pVMA->isAllocated)
+      uvmunmap(p->pagetable,addr,len/PGSIZE,1);
+
+    pVMA->length-=len;
+    if(pVMA->length==0)
+    {
+      pVMA->isFree = 1;
+      pVMA->isAllocated = 0;
+      fileclose(pVMA->fp);
+    }
+    if(addr==pVMA->start)
+      pVMA->start+=len;
+  // }
+}
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+  int len;
+  argaddr(0,&addr);
+  argint(1,&len);
+  munmap(addr,len);
+  return 0;
+}
+
+int whichVMA(uint64 va)
+{
+  struct proc* p = myproc();
+
+  uint64 start,end;
+  for(int i=0;i<NVMA;i++)
+  {
+    if(p->vmas[i].isFree==0)
+    {
+      start = p->vmas[i].start;
+      end = p->vmas[i].start + p->vmas[i].length;
+      if(va>=start&&va<end)
+        return i;
+    }
+  }
+  return -1;
+}
+
+//idx the index of VMA
+int mmapHandler(int idx)
+{
+  struct proc* p = myproc();
+  if(idx<0||idx>=NVMA)
+    return -1;
+  struct VMA* pVMA = &(p->vmas[idx]);
+  void* pa;
+  uint64 addr = pVMA->start;
+  int len = pVMA->length;
+  int perm = PTE_U;
+  if(( (pVMA->prot&PROT_READ)&&pVMA->fp->readable ) || pVMA->flags& MAP_PRIVATE)
+    perm|=PTE_R;
+  if(((pVMA->prot&PROT_WRITE)&&pVMA->fp->writable)  || pVMA->flags& MAP_PRIVATE)
+    perm|=PTE_W;
+
+  if(pVMA->isAllocated)
+    return -1;
+
+  while(len>0)
+  {
+    pa = kalloc();
+    if( pa==0 )
+      panic("out of memory");
+    memset(pa,0,PGSIZE);
+    printf("mmap handler addr:%p\n",addr);
+    mappages(p->pagetable,addr,PGSIZE,(uint64)pa,perm);
+
+    ilock(pVMA->fp->ip);
+    readi(pVMA->fp->ip,0,(uint64)pa,(uint64)addr-(uint64)pVMA->start,PGSIZE);
+    iunlock(pVMA->fp->ip);
+
+    addr+=PGSIZE;
+    len-=PGSIZE;
+  }
+  pVMA->isAllocated = 1;
+  return 0;
+
 }

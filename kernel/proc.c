@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -140,6 +141,15 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+
+
+  //initialize vmas for mmap
+  for(int i=0;i<NVMA;i++)
+  {
+    p->vmas[i].isFree = 1;
+    p->vmas[i].isAllocated = 0;
+  }
+  p->nextVMAaddr = PGROUNDDOWN(MAXVA/2);
 
   return p;
 }
@@ -289,6 +299,24 @@ fork(void)
   }
   np->sz = p->sz;
 
+  //copy VMAS
+  for(int i=0;i<NVMA;i++)
+  {
+    if( !(p->vmas[i].isFree) )
+    {
+      np->vmas[i] = p->vmas[i];
+      np->vmas[i].isAllocated = 0;
+      filedup(p->vmas[i].fp);
+    }
+    else{
+      np->vmas[i].isFree = 1;
+      np->vmas[i].isAllocated = 0;
+    }
+  }
+
+  np->nextVMAaddr = p->nextVMAaddr;
+
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -350,6 +378,22 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+
+  for(int i=0;i<NVMA;i++)
+  {
+    if(!(p->vmas[i].isFree) )
+    {
+      p->vmas[i].isFree = 1;
+      if(p->vmas[i].isAllocated)
+      {
+        if( (p->vmas[i].prot&PROT_WRITE)&&(p->vmas[i].flags & MAP_SHARED) )
+          write2file(p->vmas+i,p->vmas[i].start,p->vmas[i].length);
+        p->vmas[i].isAllocated = 0;
+        uvmunmap(p->pagetable,p->vmas[i].start,p->vmas[i].length/PGSIZE,1);
+      }
+      fileclose(p->vmas[i].fp);
     }
   }
 
